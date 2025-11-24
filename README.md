@@ -42,7 +42,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/als168/vmess-argo/main/vmess
 域名（你在 Cloudflare 控制台绑定的域名）
 
 Argo 隧道 token
-
+---
 注意事项
 ---
 临时隧道：域名为 xxxx.trycloudflare.com，适合测试。
