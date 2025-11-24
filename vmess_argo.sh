@@ -61,7 +61,6 @@ start_named_tunnel() {
   read -p "请输入你的 Argo 隧道 token: " ARGO_TOKEN
   nohup cloudflared tunnel run --token "$ARGO_TOKEN" >/tmp/argo.log 2>&1 &
   sleep 5
-  # 自建隧道需要你在 Cloudflare 控制台绑定域名，这里直接提示
   echo "[INFO] 请在 Cloudflare 控制台确认域名绑定"
 }
 
@@ -76,15 +75,28 @@ print_config() {
   echo "======================"
 }
 
+uninstall_all() {
+  echo "[WARN] 正在卸载 Xray + Cloudflared..."
+  killall xray 2>/dev/null || true
+  killall cloudflared 2>/dev/null || true
+  rm -rf $WORK_DIR
+  rm -f /usr/local/bin/xray
+  rm -f /usr/local/bin/cloudflared
+  rm -f /tmp/argo.log
+  echo "[INFO] 卸载完成！"
+}
+
 menu() {
   echo "===== VMess + Argo ====="
   echo "1. 安装并启动 (临时隧道)"
   echo "2. 安装并启动 (自建隧道)"
+  echo "3. 卸载"
   echo "0. 退出"
   read -p "请选择操作: " choice
   case "$choice" in
     1) install_xray; install_cloudflared; write_config; start_xray; start_quick_tunnel; print_config ;;
     2) install_xray; install_cloudflared; write_config; start_xray; start_named_tunnel; print_config ;;
+    3) uninstall_all ;;
     0) exit 0 ;;
     *) echo "无效选择" ;;
   esac
