@@ -8,12 +8,10 @@ XRAY_PORT=${XRAY_PORT:-10080}
 WS_PATH=${WS_PATH:-/vmess}
 ARGO_DOMAIN=""
 
-# 彩色输出函数
 info() { echo -e "\033[1;32m[INFO]\033[0m $1"; }
 warn() { echo -e "\033[1;33m[WARN]\033[0m $1"; }
 error() { echo -e "\033[1;31m[ERROR]\033[0m $1"; }
 
-# 安装依赖
 install_deps() {
   info "安装依赖..."
   if ! command -v curl >/dev/null; then
@@ -21,7 +19,6 @@ install_deps() {
   fi
 }
 
-# 安装 Xray（自动覆盖解压）
 install_xray() {
   info "安装 Xray..."
   arch=$(uname -m)
@@ -36,7 +33,6 @@ install_xray() {
   install -m 755 $WORK_DIR/xray /usr/local/bin/xray
 }
 
-# 安装 cloudflared
 install_cloudflared() {
   info "安装 Cloudflared..."
   arch=$(uname -m)
@@ -46,7 +42,6 @@ install_cloudflared() {
   chmod +x /usr/local/bin/cloudflared
 }
 
-# 写配置文件（服务端 WS 明文）
 write_config() {
   cat > $CONFIG_FILE <<EOF
 {
@@ -67,7 +62,6 @@ write_config() {
 EOF
 }
 
-# 启动服务并获取域名
 start_services() {
   nohup xray -c $CONFIG_FILE >/dev/null 2>&1 &
   echo -e "\n请选择隧道模式："
@@ -82,7 +76,6 @@ start_services() {
     nohup cloudflared tunnel --url "http://localhost:$XRAY_PORT" --no-autoupdate >/tmp/argo.log 2>&1 &
   fi
 
-  # 循环等待域名生成
   for i in {1..20}; do
     sleep 2
     domain=$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/argo.log | tail -n1)
@@ -99,13 +92,11 @@ start_services() {
 
   info "成功获取 Argo 域名: https://$ARGO_DOMAIN"
 
-  # 更新配置文件，写入域名
   write_config
   killall xray 2>/dev/null || true
   nohup xray -c $CONFIG_FILE >/dev/null 2>&1 &
 }
 
-# 输出链接
 print_link() {
   json=$(cat <<JSON
 {
@@ -133,7 +124,6 @@ JSON
   echo "====================================="
 }
 
-# 卸载
 uninstall_all() {
   warn "正在卸载 Xray + Argo..."
   killall xray 2>/dev/null || true
@@ -145,16 +135,32 @@ uninstall_all() {
   info "卸载完成！"
 }
 
-# 菜单
+# 守护进程模块：每 30 秒检测一次，挂了就重启
+watchdog() {
+  while true; do
+    sleep 30
+    if ! pgrep -x "xray" >/dev/null; then
+      warn "检测到 Xray 已停止，正在重启..."
+      nohup xray -c $CONFIG_FILE >/dev/null 2>&1 &
+    fi
+    if ! pgrep -x "cloudflared" >/dev/null; then
+      warn "检测到 Cloudflared 已停止，正在重启..."
+      nohup cloudflared tunnel --url "http://localhost:$XRAY_PORT" --no-autoupdate >/tmp/argo.log 2>&1 &
+    fi
+  done
+}
+
 menu() {
   echo "===== Xray + Argo 管理 ====="
   echo "1. 安装并启动 (生成一键链接)"
   echo "2. 卸载"
+  echo "3. 启动守护进程 (自动检测并重启)"
   echo "0. 退出"
   read -p "请选择操作: " choice
   case "$choice" in
     1) install_deps; install_xray; install_cloudflared; start_services; print_link ;;
     2) uninstall_all ;;
+    3) watchdog ;;
     0) exit 0 ;;
     *) error "无效选择" ;;
   esac
