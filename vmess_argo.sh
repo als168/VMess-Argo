@@ -73,6 +73,26 @@ print_config() {
   echo "TLS: 开启"
   echo "Host/SNI: $ARGO_DOMAIN"
   echo "======================"
+
+  # 生成 V2RayN 链接
+  vmess_json=$(cat <<EOF
+{
+  "v": "2",
+  "ps": "Argo-Vmess",
+  "add": "$ARGO_DOMAIN",
+  "port": "443",
+  "id": "$UUID",
+  "aid": "0",
+  "net": "ws",
+  "type": "none",
+  "host": "$ARGO_DOMAIN",
+  "path": "$WS_PATH",
+  "tls": "tls"
+}
+EOF
+)
+  vmess_link="vmess://$(echo -n "$vmess_json" | base64 -w0)"
+  echo "V2RayN 链接: $vmess_link"
 }
 
 uninstall_all() {
