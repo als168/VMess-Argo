@@ -15,6 +15,7 @@
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/als168/vmess-argo/main/vmess_argo.sh)"
 ```
+---
 功能菜单
 
 运行后会出现菜单：
@@ -32,7 +33,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/als168/vmess-argo/main/v
 输入 0 → 退出脚本
 
 
-
+---
 运行后选择：
 ```
 请选择隧道模式：
