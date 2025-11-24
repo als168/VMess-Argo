@@ -17,13 +17,13 @@
 
 ---
 
-## 使用方法
+使用方法
 
-### 1. 下载并运行脚本
+1. 下载并运行脚本
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/als168/vmess-argo/main/vmess_argo.sh)
 ```
-###2. 选择模式
+2. 选择模式
 运行后会出现菜单：
 ```
 ===== VMess + Argo =====
@@ -42,7 +42,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/als168/vmess-argo/main/vmess
 
 Argo 隧道 token
 
-###注意事项
+注意事项
 临时隧道：域名为 xxxx.trycloudflare.com，适合测试。
 
 自建隧道：必须在 Cloudflare 控制台创建隧道并绑定域名。
@@ -53,14 +53,14 @@ Argo 隧道 token
 
 TLS 必须开启：客户端配置时一定要勾选 TLS。
 
-###常见问题
+常见问题
 延迟显示 -1 → 检查客户端配置是否和服务端一致（域名、端口、UUID、路径、TLS、Host）。
 
 502 错误 → 通常是 Cloudflared 配置不正确或 Xray 没启动。
 
 域名解析失败 → 等待 DNS 缓存刷新，或直接用 ping 域名 测试。
 
-###致谢
+致谢
 Xray-core
 
 Cloudflared
