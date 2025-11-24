@@ -13,7 +13,7 @@
 无需下载，直接运行：
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/als168/vmess-argo/main/vmess_argo.sh)"
+bash <(curl -fsSL https://raw.githubusercontent.com/als168/vmess-argo/main/vmess_argo.sh)
 ```
 ---
 功能菜单
