@@ -95,6 +95,9 @@ start_services() {
   write_config
   killall xray 2>/dev/null || true
   nohup xray -c $CONFIG_FILE >/dev/null 2>&1 &
+
+  # 自动启动守护进程
+  watchdog &
 }
 
 print_link() {
@@ -124,21 +127,46 @@ JSON
   echo "====================================="
 }
 
-uninstall_all() {
-  warn "正在卸载 Xray + Argo..."
-  killall xray 2>/dev/null || true
-  killall cloudflared 2>/dev/null || true
-  rm -rf $WORK_DIR
-  rm -f /usr/local/bin/xray
-  rm -f /usr/local/bin/cloudflared
-  rm -f /tmp/argo.log
-  info "卸载完成！"
+diagnose() {
+  echo "===== 自动诊断 ====="
+  echo "1. 检查本地 Xray 入站..."
+  if curl -s http://127.0.0.1:$XRAY_PORT$WS_PATH >/dev/null; then
+    info "Xray 入站正常"
+  else
+    error "Xray 入站无法访问，请检查是否启动或端口是否开放"
+  fi
+
+  echo "2. 检查 Argo 隧道..."
+  if curl -vk https://$ARGO_DOMAIN >/dev/null 2>&1; then
+    info "Argo 隧道握手成功"
+  else
+    error "Argo 隧道无法握手，请检查 cloudflared 是否运行"
+  fi
+
+  echo "3. 客户端配置提示："
+  echo "   地址: $ARGO_DOMAIN"
+  echo "   端口: 443"
+  echo "   UUID: $UUID"
+  echo "   路径: $WS_PATH"
+  echo "   TLS: 开启"
+  echo "   Host/SNI: $ARGO_DOMAIN"
+  echo "====================="
 }
 
-# 守护进程模块：每 30 秒检测一次，挂了就重启
+clean_logs() {
+  warn "执行日志清理..."
+  : > /tmp/argo.log
+  info "已清理 /tmp/argo.log"
+  journalctl --vacuum-time=7d >/dev/null 2>&1 || true
+  info "已清理 7 天前的系统日志"
+}
+
 watchdog() {
+  counter=0
   while true; do
     sleep 30
+    counter=$((counter+30))
+
     if ! pgrep -x "xray" >/dev/null; then
       warn "检测到 Xray 已停止，正在重启..."
       nohup xray -c $CONFIG_FILE >/dev/null 2>&1 &
@@ -147,20 +175,62 @@ watchdog() {
       warn "检测到 Cloudflared 已停止，正在重启..."
       nohup cloudflared tunnel --url "http://localhost:$XRAY_PORT" --no-autoupdate >/tmp/argo.log 2>&1 &
     fi
+
+    if [ $counter -ge 21600 ]; then
+      clean_logs
+      counter=0
+    fi
   done
+}
+
+setup_systemd() {
+  info "正在生成 systemd 服务文件..."
+  cat > /etc/systemd/system/vmess-argo.service <<EOF
+[Unit]
+Description=VMess + Argo Tunnel 自愈脚本
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /root/vmess_argo.sh
+Restart=always
+RestartSec=10
+User=root
+WorkingDirectory=/root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  info "注册开机自启..."
+  systemctl daemon-reload
+  systemctl enable vmess-argo.service
+  systemctl restart vmess-argo.service
+  info "systemd 服务已安装并启用开机自启"
+}
+
+uninstall_all() {
+  warn "正在卸载 Xray + Argo..."
+  killall xray 2>/dev/null || true
+  killall cloudflared 2>/dev/null || true
+  rm -rf $WORK_DIR
+  rm -f /usr/local/bin/xray
+  rm -f /usr/local/bin/cloudflared
+  rm -f /tmp/argo.log
+  rm -f /etc/systemd/system/vmess-argo.service
+  systemctl daemon-reload
+  info "卸载完成！"
 }
 
 menu() {
   echo "===== Xray + Argo 管理 ====="
-  echo "1. 安装并启动 (生成一键链接)"
+  echo "1. 安装并启动 (自动诊断 + 自动守护 + 日志清理 + 开机自启)"
   echo "2. 卸载"
-  echo "3. 启动守护进程 (自动检测并重启)"
   echo "0. 退出"
   read -p "请选择操作: " choice
   case "$choice" in
-    1) install_deps; install_xray; install_cloudflared; start_services; print_link ;;
+    1) install_deps; install_xray; install_cloudflared; start_services; print_link; diagnose; setup_systemd ;;
     2) uninstall_all ;;
-    3) watchdog ;;
     0) exit 0 ;;
     *) error "无效选择" ;;
   esac
