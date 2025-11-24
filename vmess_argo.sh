@@ -8,15 +8,22 @@ XRAY_PORT=${XRAY_PORT:-10080}
 WS_PATH=${WS_PATH:-/vmess}
 ARGO_DOMAIN=""
 
+# 彩色输出函数
+info() { echo -e "\033[1;32m[INFO]\033[0m $1"; }
+warn() { echo -e "\033[1;33m[WARN]\033[0m $1"; }
+error() { echo -e "\033[1;31m[ERROR]\033[0m $1"; }
+
 # 安装依赖
 install_deps() {
+  info "安装依赖..."
   if ! command -v curl >/dev/null; then
     apt update -y && apt install -y curl unzip || yum install -y curl unzip
   fi
 }
 
-# 安装 Xray
+# 安装 Xray（自动覆盖解压）
 install_xray() {
+  info "安装 Xray..."
   arch=$(uname -m)
   case "$arch" in
     x86_64) dl_arch="64" ;;
@@ -25,12 +32,13 @@ install_xray() {
   esac
   mkdir -p $WORK_DIR
   curl -fsSL "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-$dl_arch.zip" -o xray.zip
-  unzip -q xray.zip -d $WORK_DIR && rm xray.zip
+  unzip -qo xray.zip -d $WORK_DIR && rm xray.zip
   install -m 755 $WORK_DIR/xray /usr/local/bin/xray
 }
 
 # 安装 cloudflared
 install_cloudflared() {
+  info "安装 Cloudflared..."
   arch=$(uname -m)
   url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
   [ "$arch" = "aarch64" ] && url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64"
@@ -38,7 +46,7 @@ install_cloudflared() {
   chmod +x /usr/local/bin/cloudflared
 }
 
-# 写配置文件
+# 写配置文件（服务端 WS 明文）
 write_config() {
   cat > $CONFIG_FILE <<EOF
 {
@@ -48,11 +56,10 @@ write_config() {
     "settings": { "clients": [{ "id": "$UUID" }] },
     "streamSettings": {
       "network": "ws",
-      "security": "tls",
-      "tlsSettings": {
-        "serverName": "$ARGO_DOMAIN"
-      },
-      "wsSettings": { "path": "$WS_PATH", "headers": { "Host": "$ARGO_DOMAIN" } }
+      "wsSettings": {
+        "path": "$WS_PATH",
+        "headers": { "Host": "$ARGO_DOMAIN" }
+      }
     }
   }],
   "outbounds": [{ "protocol": "freedom" }]
@@ -76,7 +83,7 @@ start_services() {
   fi
 
   # 循环等待域名生成
-  for i in {1..15}; do
+  for i in {1..20}; do
     sleep 2
     domain=$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/argo.log | tail -n1)
     if [ -n "$domain" ]; then
@@ -86,9 +93,11 @@ start_services() {
   done
 
   if [ -z "$ARGO_DOMAIN" ]; then
-    echo "❌ 未能获取 Argo 域名，请检查 cloudflared 是否成功启动"
+    error "未能获取 Argo 域名，请检查 cloudflared 是否成功启动"
     exit 1
   fi
+
+  info "成功获取 Argo 域名: https://$ARGO_DOMAIN"
 
   # 更新配置文件，写入域名
   write_config
@@ -116,24 +125,24 @@ JSON
 )
   link="vmess://$(echo -n "$json" | base64 -w0)"
   echo "====================================="
-  echo "UUID: $UUID"
-  echo "WS_PATH: $WS_PATH"
-  echo "Argo 域名: https://$ARGO_DOMAIN"
-  echo "客户端导入链接:"
+  info "UUID: $UUID"
+  info "WS_PATH: $WS_PATH"
+  info "Argo 域名: https://$ARGO_DOMAIN"
+  info "客户端导入链接:"
   echo "$link"
   echo "====================================="
 }
 
 # 卸载
 uninstall_all() {
-  echo "正在卸载 Xray + Argo..."
+  warn "正在卸载 Xray + Argo..."
   killall xray 2>/dev/null || true
   killall cloudflared 2>/dev/null || true
   rm -rf $WORK_DIR
   rm -f /usr/local/bin/xray
   rm -f /usr/local/bin/cloudflared
   rm -f /tmp/argo.log
-  echo "卸载完成！"
+  info "卸载完成！"
 }
 
 # 菜单
@@ -147,7 +156,7 @@ menu() {
     1) install_deps; install_xray; install_cloudflared; start_services; print_link ;;
     2) uninstall_all ;;
     0) exit 0 ;;
-    *) echo "无效选择" ;;
+    *) error "无效选择" ;;
   esac
 }
 
