@@ -38,7 +38,7 @@ install_cloudflared() {
   chmod +x /usr/local/bin/cloudflared
 }
 
-# 写配置文件（包含 TLS 和 Argo 域名）
+# 写配置文件
 write_config() {
   cat > $CONFIG_FILE <<EOF
 {
@@ -75,8 +75,8 @@ start_services() {
     nohup cloudflared tunnel --url "http://localhost:$XRAY_PORT" --no-autoupdate >/tmp/argo.log 2>&1 &
   fi
 
-  # 等待域名生成
-  for i in {1..10}; do
+  # 循环等待域名生成
+  for i in {1..15}; do
     sleep 2
     domain=$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/argo.log | tail -n1)
     if [ -n "$domain" ]; then
@@ -92,7 +92,7 @@ start_services() {
 
   # 更新配置文件，写入域名
   write_config
-  pkill -f xray || true
+  killall xray 2>/dev/null || true
   nohup xray -c $CONFIG_FILE >/dev/null 2>&1 &
 }
 
