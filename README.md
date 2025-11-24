@@ -1,22 +1,39 @@
-# vmess + Argo 一键脚本 (Linux)
+# Xray + Argo 极简一键管理脚本
 
-本仓库提供一个 **单文件 Bash 脚本**，可以在 Linux 系统上一键部署：
-- Xray (vmess + WebSocket)
-- Cloudflare Argo Tunnel (cloudflared)
+本脚本适合低配 VPS（128MB 内存 / 256MB 存储），支持两种隧道模式：
+- **临时隧道 (Quick Tunnel)** —— 简单快速，但域名随机、不稳定
+- **自建隧道 (命名隧道/有 token)** —— 需要 Cloudflare 账号，域名固定，稳定性高
 
-无需域名和证书，默认使用 Cloudflare Quick Tunnel，自动生成客户端导入链接。
+脚本名称：`vmess_argo.sh`
 
 ---
 
-## 快速开始
+## 一键运行命令
 
-### 下载并运行
+无需下载，直接运行：
+
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/als168/vmess-argo-min/main/vmess_argo_min.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/als168/vmess-argo/main/vmess_argo.sh)"
+```
+功能菜单
 
+运行后会出现菜单：
 
 ```
-运行后会提示选择：
+===== Xray + Argo 管理 =====
+1. 安装并启动 (生成一键链接)
+2. 卸载
+0. 退出
+```
+输入 1 → 安装并启动，生成完整的 vmess:// 导入链接
+
+输入 2 → 卸载，清理所有文件和进程
+
+输入 0 → 退出脚本
+
+
+
+运行后选择：
 ```
 请选择隧道模式：
 1. 临时隧道 (Quick Tunnel) —— 简单快速，但域名随机、不稳定
