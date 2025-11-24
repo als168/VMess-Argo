@@ -43,9 +43,11 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/als168/vmess-argo/main/v
 输入 1 → 使用临时隧道，自动生成一个随机域名。
 
 输入 2 → 使用自建隧道，需要输入你在 Cloudflare 面板里创建的 token。
+
 ---
 
 许可证
+---
 MIT License
 ```
 ---
