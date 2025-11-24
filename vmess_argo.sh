@@ -6,7 +6,6 @@ CONFIG_FILE="$WORK_DIR/config.json"
 UUID=${UUID:-$(cat /proc/sys/kernel/random/uuid)}
 XRAY_PORT=8001
 WS_PATH="/vmess"
-ARGO_DOMAIN=""
 
 install_xray() {
   mkdir -p $WORK_DIR
@@ -29,7 +28,7 @@ install_cloudflared() {
   chmod +x /usr/local/bin/cloudflared
 }
 
-write_config() {
+write_xray_config() {
   cat > $CONFIG_FILE <<EOF
 {
   "inbounds": [{
@@ -46,6 +45,23 @@ write_config() {
 EOF
 }
 
+write_cloudflared_config() {
+  read -p "请输入你的隧道ID: " TUNNEL_ID
+  read -p "请输入你在 Cloudflare 控制台绑定的域名: " USER_DOMAIN
+  mkdir -p /etc/cloudflared
+  cat > /etc/cloudflared/config.yml <<EOF
+tunnel: $TUNNEL_ID
+credentials-file: /root/.cloudflared/$TUNNEL_ID.json
+
+ingress:
+  - hostname: $USER_DOMAIN
+    service: http://localhost:$XRAY_PORT
+    originRequest:
+      httpHostHeader: $USER_DOMAIN
+  - service: http_status:404
+EOF
+}
+
 start_xray() {
   nohup xray -c $CONFIG_FILE >/dev/null 2>&1 &
 }
@@ -59,7 +75,6 @@ start_quick_tunnel() {
 
 start_named_tunnel() {
   read -p "请输入你的 Argo 隧道 token: " ARGO_TOKEN
-  read -p "请输入你在 Cloudflare 控制台绑定的域名: " ARGO_DOMAIN
   nohup cloudflared tunnel run --token "$ARGO_TOKEN" >/tmp/argo.log 2>&1 &
   sleep 5
 }
@@ -74,7 +89,6 @@ print_config() {
   echo "Host/SNI: $ARGO_DOMAIN"
   echo "======================"
 
-  # 生成 V2RayN 链接
   vmess_json=$(cat <<EOF
 {
   "v": "2",
@@ -102,6 +116,7 @@ uninstall_all() {
   rm -rf $WORK_DIR
   rm -f /usr/local/bin/xray
   rm -f /usr/local/bin/cloudflared
+  rm -f /etc/cloudflared/config.yml
   rm -f /tmp/argo.log
   echo "[INFO] 卸载完成！"
 }
@@ -114,8 +129,8 @@ menu() {
   echo "0. 退出"
   read -p "请选择操作: " choice
   case "$choice" in
-    1) install_xray; install_cloudflared; write_config; start_xray; start_quick_tunnel; print_config ;;
-    2) install_xray; install_cloudflared; write_config; start_xray; start_named_tunnel; print_config ;;
+    1) install_xray; install_cloudflared; write_xray_config; start_xray; start_quick_tunnel; print_config ;;
+    2) install_xray; install_cloudflared; write_xray_config; write_cloudflared_config; start_xray; start_named_tunnel; print_config ;;
     3) uninstall_all ;;
     0) exit 0 ;;
     *) echo "无效选择" ;;
