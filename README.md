@@ -17,7 +17,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/als168/vmess-argo/main/v
 ```
 ---
 功能菜单
-
+---
 运行后会出现菜单：
 
 ```
