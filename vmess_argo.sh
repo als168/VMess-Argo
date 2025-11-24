@@ -106,8 +106,8 @@ JSON
 # 卸载
 uninstall_all() {
   echo "正在卸载 Xray + Argo..."
-  pkill -f xray || true
-  pkill -f cloudflared || true
+  killall xray 2>/dev/null || true
+  killall cloudflared 2>/dev/null || true
   rm -rf $WORK_DIR
   rm -f /usr/local/bin/xray
   rm -f /usr/local/bin/cloudflared
