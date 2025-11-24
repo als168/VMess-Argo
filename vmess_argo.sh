@@ -59,9 +59,9 @@ start_quick_tunnel() {
 
 start_named_tunnel() {
   read -p "请输入你的 Argo 隧道 token: " ARGO_TOKEN
+  read -p "请输入你在 Cloudflare 控制台绑定的域名: " ARGO_DOMAIN
   nohup cloudflared tunnel run --token "$ARGO_TOKEN" >/tmp/argo.log 2>&1 &
   sleep 5
-  echo "[INFO] 请在 Cloudflare 控制台确认域名绑定"
 }
 
 print_config() {
