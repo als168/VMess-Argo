@@ -77,3 +77,5 @@ TLS 必须开启：客户端配置时一定要勾选 TLS。
 Xray-core
 
 Cloudflared
+
+sing-box
