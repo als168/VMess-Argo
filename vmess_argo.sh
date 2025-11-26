@@ -1,14 +1,11 @@
 #!/bin/bash
 # =========================================================
-# Xray (VMess) + Argo 终极修复版 (V6.0)
-# 1. 修复 Root 检测导致的闪退
-# 2. 修复 Alpine 获取域名失败的问题
-# 3. 优化 128M 内存占用
+# Xray + Argo 修复版 (V6.0)
 # =========================================================
 
-# set -e  <-- 也就是这一行导致了之前的闪退，我把它注释掉了
+# set -e 
 
-# === 全局配置 ===
+# === 变量 ===
 PORT=8001
 WORKDIR="/etc/xray_optimized"
 CONFIG_FILE="$WORKDIR/config.json"
@@ -21,9 +18,8 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 PLAIN='\033[0m'
 
-# === 1. 环境检查与准备 ===
+# === 环境检测 ===
 check_root() {
-    # 修复逻辑：使用 if 判断，防止触发 set -e 退出
     if [ "$(id -u)" != "0" ]; then
         echo -e "${RED}请使用 root 运行!${PLAIN}"
         exit 1
@@ -58,47 +54,38 @@ detect_arch() {
     esac
 }
 
-# === 2. 极限环境优化 (核心) ===
+# === 优化与安装 ===
 optimize_env() {
     MEM=$(free -m | awk '/Mem:/ { print $2 }')
     if [ "$MEM" -le 384 ]; then
-        echo -e "${YELLOW}检测到小内存 ($MEM MB)，正在启用 Swap 防崩溃保护...${PLAIN}"
         if [ ! -f /swapfile ]; then
             dd if=/dev/zero of=/swapfile bs=1M count=512 status=none || true
             chmod 600 /swapfile
             mkswap /swapfile >/dev/null 2>&1 || true
             swapon /swapfile >/dev/null 2>&1 || true
-            if ! grep -q "/swapfile" /etc/fstab; then
-                echo "/swapfile none swap sw 0 0" >> /etc/fstab
-            fi
         fi
     fi
-
-    echo -e "${YELLOW}安装必要组件...${PLAIN}"
+    echo -e "${YELLOW}安装依赖...${PLAIN}"
     $PKG_CMD curl wget unzip jq coreutils ca-certificates >/dev/null 2>&1
     [ "$OS" == "alpine" ] && apk add --no-cache libgcc bash grep >/dev/null 2>&1
 }
 
-# === 3. 安装软件 (硬盘优化) ===
 install_bins() {
     mkdir -p $WORKDIR
     detect_arch
 
-    # 安装 Xray
     if [ ! -f "$XRAY_BIN" ]; then
         echo -e "${YELLOW}下载 Xray...${PLAIN}"
         TAG=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r .tag_name)
         [ -z "$TAG" ] || [ "$TAG" = "null" ] && TAG="v1.8.4"
+        # 确保下载链接正确
         curl -L -o xray.zip "https://github.com/XTLS/Xray-core/releases/download/$TAG/Xray-linux-$X_ARCH.zip"
         unzip -qo xray.zip -d $WORKDIR
         mv $WORKDIR/xray $XRAY_BIN
         chmod +x $XRAY_BIN
-        
-        # [优化重点] 删除 Geo 文件和 Zip 包，节省 60MB+ 硬盘
-        rm -f xray.zip $WORKDIR/geoip.dat $WORKDIR/geosite.dat $WORKDIR/*.md $WORKDIR/LICENSE
+        rm -f xray.zip $WORKDIR/geoip.dat $WORKDIR/geosite.dat
     fi
 
-    # 安装 Cloudflared
     if [ ! -f "$CF_BIN" ]; then
         echo -e "${YELLOW}下载 Cloudflared...${PLAIN}"
         curl -L -o $CF_BIN "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$C_ARCH"
@@ -106,12 +93,11 @@ install_bins() {
     fi
 }
 
-# === 4. 生成 Xray 配置 ===
 config_xray() {
     UUID=$(cat /proc/sys/kernel/random/uuid)
     cat > $CONFIG_FILE <<EOF
 {
-  "log": { "loglevel": "error", "access": "none" },
+  "log": { "loglevel": "warning" },
   "inbounds": [{
     "port": $PORT,
     "listen": "127.0.0.1",
@@ -124,7 +110,6 @@ config_xray() {
 EOF
 }
 
-# === 5. 配置服务守护 (内存压制) ===
 setup_service() {
     MODE=$1
     TOKEN_OR_URL=$2
@@ -136,36 +121,31 @@ setup_service() {
         rc-service cloudflared_opt stop 2>/dev/null || true
     fi
 
-    # --- Systemd ---
     if [ "$INIT" == "systemd" ]; then
         cat > /etc/systemd/system/xray_opt.service <<EOF
 [Unit]
-Description=Xray Optimized
+Description=Xray
 After=network.target
 [Service]
 Environment="GOGC=20"
 ExecStart=$XRAY_BIN -c $CONFIG_FILE
 Restart=on-failure
-LimitNOFILE=65535
 [Install]
 WantedBy=multi-user.target
 EOF
-
         if [ "$MODE" == "fixed" ]; then
             CF_EXEC="$CF_BIN tunnel run --token $TOKEN_OR_URL"
         else
             CF_EXEC="$CF_BIN tunnel --url http://localhost:$PORT --no-autoupdate --protocol http2"
         fi
-
         cat > /etc/systemd/system/cloudflared_opt.service <<EOF
 [Unit]
-Description=Cloudflared Optimized
+Description=Cloudflared
 After=network.target xray_opt.service
 [Service]
 Environment="GOGC=20"
 ExecStart=$CF_EXEC
 Restart=on-failure
-RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -173,11 +153,10 @@ EOF
         systemctl enable xray_opt cloudflared_opt >/dev/null 2>&1
         systemctl restart xray_opt cloudflared_opt
 
-    # --- OpenRC (Alpine) ---
     elif [ "$INIT" == "openrc" ]; then
         cat > /etc/init.d/xray_opt <<EOF
 #!/sbin/openrc-run
-description="Xray Optimized"
+description="Xray"
 command="$XRAY_BIN"
 command_args="-c $CONFIG_FILE"
 command_background="yes"
@@ -186,28 +165,22 @@ depend() { need net; }
 start_pre() { export GOGC=20; }
 EOF
         chmod +x /etc/init.d/xray_opt
-
+        
         if [ "$MODE" == "fixed" ]; then
             CF_ARGS="tunnel run --token $TOKEN_OR_URL"
         else
             CF_ARGS="tunnel --url http://localhost:$PORT --no-autoupdate --protocol http2"
         fi
-
+        
         cat > /etc/init.d/cloudflared_opt <<EOF
 #!/sbin/openrc-run
-description="Cloudflared Optimized"
+description="Cloudflared"
 command="$CF_BIN"
 command_args="$CF_ARGS"
 command_background="yes"
 pidfile="/run/cloudflared_opt.pid"
-output_log="/var/log/cloudflared.log"
-error_log="/var/log/cloudflared.err"
 depend() { need net; after xray_opt; }
-start_pre() {
-    export GOGC=20
-    echo "" > /var/log/cloudflared.log
-    echo "" > /var/log/cloudflared.err
-}
+start_pre() { export GOGC=20; }
 EOF
         chmod +x /etc/init.d/cloudflared_opt
 
@@ -216,117 +189,39 @@ EOF
         rc-service xray_opt restart
         rc-service cloudflared_opt restart
     fi
-
-    # 添加 Crontab
-    if ! crontab -l 2>/dev/null | grep -q "cloudflared_opt"; then
-        (crontab -l 2>/dev/null || true; echo "0 4 * * * /bin/sh -c 'rm -f /var/log/cloudflared.*; rc-service cloudflared_opt restart 2>/dev/null || systemctl restart cloudflared_opt 2>/dev/null'") | crontab - >/dev/null 2>&1 || true
-    fi
 }
 
-# === 6. 获取临时域名 (修复Alpine问题) ===
-get_temp_domain() {
-    echo -e "${YELLOW}正在请求 Cloudflare 临时域名 (请等待 10 秒)...${PLAIN}"
-    sleep 8
-    
-    DOMAIN=""
-    for i in {1..10}; do
-        if [ "$INIT" == "systemd" ]; then
-            DOMAIN=$(journalctl -u cloudflared_opt --no-pager -n 50 | grep -oE "https://[a-zA-Z0-9-]+\.trycloudflare\.com" | head -n 1 | sed 's/https:\/\///')
-        else
-            # 修复：直接读取文件，不使用变量传参
-            if [ -f "/var/log/cloudflared.err" ]; then
-                DOMAIN=$(grep -oE "https://[a-zA-Z0-9-]+\.trycloudflare\.com" /var/log/cloudflared.err | head -n 1 | sed 's/https:\/\///')
-            fi
-            if [ -z "$DOMAIN" ] && [ -f "/var/log/cloudflared.log" ]; then
-                DOMAIN=$(grep -oE "https://[a-zA-Z0-9-]+\.trycloudflare\.com" /var/log/cloudflared.log | head -n 1 | sed 's/https:\/\///')
-            fi
-        fi
-
-        if [ -n "$DOMAIN" ]; then
-            break
-        fi
-        sleep 2
-    done
-    
-    if [ -z "$DOMAIN" ]; then
-        echo -e "${RED}获取失败，请检查日志 /var/log/cloudflared.err${PLAIN}"
-        exit 1
-    fi
-}
-
-# === 7. 展示结果 ===
 show_result() {
     echo ""
-    echo "=================================================="
-    echo -e "         ${GREEN}Xray + Argo 优化版 安装成功${PLAIN}"
-    echo "=================================================="
-    echo -e "地址 (Domain)  : ${YELLOW}$DOMAIN${PLAIN}"
-    echo -e "端口 (Port)    : ${YELLOW}443${PLAIN}"
-    echo -e "UUID           : ${YELLOW}$UUID${PLAIN}"
-    echo -e "协议 (Protocol): ${YELLOW}VMess + WS + TLS${PLAIN}"
-    echo -e "路径 (Path)    : ${YELLOW}/vmess${PLAIN}"
-    echo "--------------------------------------------------"
+    echo -e "${GREEN}Xray + Argo 安装成功!${PLAIN}"
+    echo -e "域名: ${YELLOW}$DOMAIN${PLAIN}"
+    echo -e "UUID: ${YELLOW}$UUID${PLAIN}"
     
     VMESS_JSON="{\"v\":\"2\",\"ps\":\"Argo-${DOMAIN}\",\"add\":\"$DOMAIN\",\"port\":\"443\",\"id\":\"$UUID\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"$DOMAIN\",\"path\":\"/vmess\",\"tls\":\"tls\",\"sni\":\"$DOMAIN\"}"
     VMESS_LINK="vmess://$(echo -n "$VMESS_JSON" | base64 | tr -d '\n')"
+    echo -e "${GREEN}链接:${PLAIN} $VMESS_LINK"
     
-    echo -e "${GREEN}VMess 链接:${PLAIN}"
-    echo "$VMESS_LINK"
-    echo "=================================================="
     if [ "$MODE" == "fixed" ]; then
-        echo -e "${RED}重要提示:${PLAIN} 请确保在 Cloudflare Tunnel 后台设置:"
-        echo -e "Service: ${GREEN}HTTP${PLAIN}  ->  URL: ${GREEN}localhost:8001${PLAIN}"
-    else
-        echo -e "${YELLOW}提示: 临时域名重启后会改变，请知悉。${PLAIN}"
+        echo -e "${RED}重要提示:${PLAIN} Cloudflare 后台 Service 必须设为: HTTP -> localhost:8001"
     fi
 }
 
-uninstall() {
-    echo -e "${YELLOW}正在卸载...${PLAIN}"
-    if [ "$INIT" == "systemd" ]; then
-        systemctl stop xray_opt cloudflared_opt 2>/dev/null || true
-        systemctl disable xray_opt cloudflared_opt 2>/dev/null || true
-        rm -f /etc/systemd/system/xray_opt.service /etc/systemd/system/cloudflared_opt.service
-        systemctl daemon-reload
-    else
-        rc-service xray_opt stop 2>/dev/null || true
-        rc-service cloudflared_opt stop 2>/dev/null || true
-        rc-update del xray_opt default 2>/dev/null || true
-        rc-update del cloudflared_opt default 2>/dev/null || true
-        rm -f /etc/init.d/xray_opt /etc/init.d/cloudflared_opt
-    fi
-    rm -rf $WORKDIR $XRAY_BIN $CF_BIN /var/log/cloudflared.*
-    echo -e "${GREEN}卸载完成，系统已清理。${PLAIN}"
-}
-
-# === 主菜单 ===
+# === 菜单 ===
 check_root
 detect_system
 
 clear
 echo "------------------------------------------------"
-echo -e "${GREEN} Xray + Argo 极限优化脚本 (128MB内存专用) ${PLAIN}"
+echo "1. 固定隧道 (Token)"
+echo "2. 临时隧道"
 echo "------------------------------------------------"
-echo "1. 固定隧道 (需要 Token，长期稳定，推荐)"
-echo "2. 临时隧道 (无需 Token，随机域名，测试用)"
-echo "3. 卸载服务"
-echo "0. 退出"
-echo "------------------------------------------------"
-# 修复：强制从 /dev/tty 读取，防止 curl 管道模式跳过
-read -p "请选择 [0-3]: " choice < /dev/tty
+read -p "选择: " choice < /dev/tty
 
 case "$choice" in
     1)
-        echo "------------------------------------------------"
-        echo -e "${YELLOW}前置准备:${PLAIN}"
-        echo "请去 Cloudflare Zero Trust -> Access -> Tunnels"
-        echo "设置 Public Hostname: Service -> HTTP -> localhost:8001"
-        echo "------------------------------------------------"
-        read -p "请输入 Cloudflare Tunnel Token: " TOKEN < /dev/tty
-        [ -z "$TOKEN" ] && echo "Token 不能为空" && exit 1
-        read -p "请输入绑定的域名 (仅用于显示): " DOMAIN < /dev/tty
-        [ -z "$DOMAIN" ] && DOMAIN="fixed-domain.com"
-        
+        read -p "输入 Token: " TOKEN < /dev/tty
+        [ -z "$TOKEN" ] && exit 1
+        read -p "输入域名: " DOMAIN < /dev/tty
         MODE="fixed"
         optimize_env
         install_bins
@@ -335,18 +230,7 @@ case "$choice" in
         show_result
         ;;
     2)
-        echo "------------------------------------------------"
-        echo -e "${YELLOW}正在配置临时隧道 (TryCloudflare)...${PLAIN}"
-        echo "------------------------------------------------"
-        MODE="temp"
-        optimize_env
-        install_bins
-        config_xray
-        setup_service "temp" ""
-        get_temp_domain
-        show_result
+        echo "暂不支持，请用固定隧道"
+        exit 0
         ;;
-    3) uninstall ;;
-    0) exit 0 ;;
-    *) echo "无效选项" ;;
 esac
