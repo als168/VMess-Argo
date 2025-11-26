@@ -1,10 +1,11 @@
 #!/bin/bash
 # =========================================================
 # Sing-box + Argo 全能脚本 (128M 内存极限优化版)
-# 核心替换为 Sing-box，内存占用更低
+# V3.0 修复: 解决获取域名时的 cat 报错问题
 # =========================================================
 
-set -e
+# 去掉 set -e，避免因 crontab 或其它非致命错误导致脚本意外退出
+# set -e 
 
 # === 变量 ===
 PORT=8001
@@ -19,9 +20,8 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 PLAIN='\033[0m'
 
-# === 1. 环境准备 (修复版) ===
+# === 1. 环境准备 ===
 check_root() {
-    # 使用 if 语句代替 && 简写，防止 set -e 误判退出
     if [ "$(id -u)" != "0" ]; then
         echo -e "${RED}请使用 root 运行!${PLAIN}"
         exit 1
@@ -58,7 +58,6 @@ detect_arch() {
 
 # === 2. 128M 内存救命优化 ===
 optimize_env() {
-    # 自动 Swap
     MEM=$(free -m | awk '/Mem:/ { print $2 }')
     if [ "$MEM" -le 384 ]; then
         echo -e "${YELLOW}检测到小内存 ($MEM MB)，正在启用 Swap...${PLAIN}"
@@ -73,38 +72,29 @@ optimize_env() {
         fi
     fi
 
-    # 安装依赖
     echo -e "${YELLOW}安装依赖...${PLAIN}"
     $PKG_CMD curl wget tar jq coreutils ca-certificates >/dev/null 2>&1
-    [ "$OS" == "alpine" ] && apk add --no-cache libgcc >/dev/null 2>&1
+    [ "$OS" == "alpine" ] && apk add --no-cache libgcc bash grep >/dev/null 2>&1
 }
 
-# === 3. 安装 Sing-box 和 Cloudflared ===
+# === 3. 安装软件 ===
 install_bins() {
     mkdir -p $WORKDIR
     detect_arch
 
-    # 安装 Sing-box
     if [ ! -f "$SB_BIN" ]; then
         echo -e "${YELLOW}下载 Sing-box...${PLAIN}"
-        # 获取最新版本
         TAG=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
         [ -z "$TAG" ] || [ "$TAG" = "null" ] && TAG="v1.8.0"
-        
-        # Sing-box 官方包名规则: sing-box-1.8.0-linux-amd64.tar.gz
         VERSION=${TAG#v}
         URL="https://github.com/SagerNet/sing-box/releases/download/$TAG/sing-box-${VERSION}-linux-${SB_ARCH}.tar.gz"
-        
         curl -L -o singbox.tar.gz "$URL"
         tar -xzf singbox.tar.gz -C $WORKDIR
-        # 提取二进制文件 (解压出来的目录带版本号，需要通配符)
         mv $WORKDIR/sing-box-*/sing-box $SB_BIN
         chmod +x $SB_BIN
-        # 清理
         rm -rf singbox.tar.gz $WORKDIR/sing-box-* 
     fi
 
-    # 安装 Cloudflared
     if [ ! -f "$CF_BIN" ]; then
         echo -e "${YELLOW}下载 Cloudflared...${PLAIN}"
         curl -L -o $CF_BIN "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$CF_ARCH"
@@ -112,51 +102,30 @@ install_bins() {
     fi
 }
 
-# === 4. 生成 Sing-box 配置 (JSON) ===
+# === 4. 生成配置 ===
 config_singbox() {
     UUID=$(cat /proc/sys/kernel/random/uuid)
-    
-    # Sing-box 的配置比 Xray 更简洁
     cat > $CONFIG_FILE <<EOF
 {
-  "log": {
-    "level": "error",
-    "timestamp": true
-  },
-  "inbounds": [
-    {
-      "type": "vmess",
-      "tag": "vmess-in",
-      "listen": "127.0.0.1",
-      "listen_port": $PORT,
-      "users": [
-        {
-          "uuid": "$UUID",
-          "alterId": 0
-        }
-      ],
-      "transport": {
-        "type": "ws",
-        "path": "/vmess"
-      }
-    }
-  ],
-  "outbounds": [
-    {
-      "type": "direct",
-      "tag": "direct"
-    }
-  ]
+  "log": { "level": "error", "timestamp": true },
+  "inbounds": [{
+    "type": "vmess",
+    "tag": "vmess-in",
+    "listen": "127.0.0.1",
+    "listen_port": $PORT,
+    "users": [{ "uuid": "$UUID", "alterId": 0 }],
+    "transport": { "type": "ws", "path": "/vmess" }
+  }],
+  "outbounds": [{ "type": "direct", "tag": "direct" }]
 }
 EOF
 }
 
-# === 5. 设置服务 (GOGC优化) ===
+# === 5. 设置服务 ===
 setup_service() {
     MODE=$1
     TOKEN_OR_URL=$2
 
-    # 停止旧服务
     if [ "$INIT" == "systemd" ]; then
         systemctl stop singbox_lite cloudflared_lite 2>/dev/null || true
     else
@@ -164,10 +133,8 @@ setup_service() {
         rc-service cloudflared_lite stop 2>/dev/null || true
     fi
 
-    # 重点：Environment="GOGC=20" 压制 Sing-box 内存
-    
+    # Systemd
     if [ "$INIT" == "systemd" ]; then
-        # Sing-box Service
         cat > /etc/systemd/system/singbox_lite.service <<EOF
 [Unit]
 Description=Sing-box Lite
@@ -181,7 +148,6 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 EOF
 
-        # Cloudflared Service
         if [ "$MODE" == "fixed" ]; then
             CF_EXEC="$CF_BIN tunnel run --token $TOKEN_OR_URL"
         else
@@ -204,8 +170,8 @@ EOF
         systemctl enable singbox_lite cloudflared_lite >/dev/null 2>&1
         systemctl restart singbox_lite cloudflared_lite
 
+    # OpenRC (Alpine)
     elif [ "$INIT" == "openrc" ]; then
-        # Sing-box Service (OpenRC)
         cat > /etc/init.d/singbox_lite <<EOF
 #!/sbin/openrc-run
 description="Sing-box Lite"
@@ -218,7 +184,6 @@ start_pre() { export GOGC=20; }
 EOF
         chmod +x /etc/init.d/singbox_lite
 
-        # Cloudflared Service (OpenRC)
         if [ "$MODE" == "fixed" ]; then
             CF_ARGS="tunnel run --token $TOKEN_OR_URL"
         else
@@ -249,26 +214,43 @@ EOF
         rc-service cloudflared_lite restart
     fi
 
-    # 添加定时清理任务
+    # 添加 Crontab (容错处理)
     if ! crontab -l 2>/dev/null | grep -q "cloudflared_lite"; then
-        (crontab -l 2>/dev/null; echo "0 4 * * * /bin/sh -c 'rm -f /var/log/cloudflared.*; rc-service cloudflared_lite restart || systemctl restart cloudflared_lite'") | crontab -
+        (crontab -l 2>/dev/null || true; echo "0 4 * * * /bin/sh -c 'rm -f /var/log/cloudflared.*; rc-service cloudflared_lite restart 2>/dev/null || systemctl restart cloudflared_lite 2>/dev/null'") | crontab - >/dev/null 2>&1 || echo -e "${YELLOW}Crontab 添加失败，但不影响运行。${PLAIN}"
     fi
 }
 
+# === 6. 获取临时域名 (V3修复版) ===
 get_temp_domain() {
-    echo -e "${YELLOW}获取临时域名...${PLAIN}"
+    echo -e "${YELLOW}正在获取临时域名 (请等待 5 秒)...${PLAIN}"
     sleep 5
-    if [ "$INIT" == "systemd" ]; then
-        LOG_CMD="journalctl -u cloudflared_lite --no-pager -n 50"
-    else
-        LOG_CMD="cat /var/log/cloudflared.err /var/log/cloudflared.log 2>/dev/null"
-    fi
+    
+    DOMAIN=""
     for i in {1..10}; do
-        DOMAIN=$($LOG_CMD | grep -oE "https://[a-zA-Z0-9-]+\.trycloudflare\.com" | head -n 1 | sed 's/https:\/\///')
-        [ -n "$DOMAIN" ] && break
-        sleep 3
+        if [ "$INIT" == "systemd" ]; then
+            # Systemd: 使用 journalctl
+            DOMAIN=$(journalctl -u cloudflared_lite --no-pager -n 50 | grep -oE "https://[a-zA-Z0-9-]+\.trycloudflare\.com" | head -n 1 | sed 's/https:\/\///')
+        else
+            # Alpine/OpenRC: 直接读取文件，不使用 cat 变量
+            # 优先读 .err，如果没有读 .log
+            if [ -f "/var/log/cloudflared.err" ]; then
+                DOMAIN=$(grep -oE "https://[a-zA-Z0-9-]+\.trycloudflare\.com" /var/log/cloudflared.err | head -n 1 | sed 's/https:\/\///')
+            fi
+            if [ -z "$DOMAIN" ] && [ -f "/var/log/cloudflared.log" ]; then
+                DOMAIN=$(grep -oE "https://[a-zA-Z0-9-]+\.trycloudflare\.com" /var/log/cloudflared.log | head -n 1 | sed 's/https:\/\///')
+            fi
+        fi
+
+        if [ -n "$DOMAIN" ]; then
+            break
+        fi
+        sleep 2
     done
-    [ -z "$DOMAIN" ] && echo -e "${RED}获取失败${PLAIN}" && exit 1
+
+    if [ -z "$DOMAIN" ]; then
+        echo -e "${RED}获取失败，请检查 /var/log/cloudflared.err 日志${PLAIN}"
+        exit 1
+    fi
 }
 
 show_result() {
@@ -289,6 +271,9 @@ show_result() {
     echo -e "${GREEN}VMess 链接:${PLAIN}"
     echo "$VMESS_LINK"
     echo "=================================================="
+    if [ "$MODE" == "temp" ]; then
+        echo -e "${YELLOW}注意: 这是临时域名，重启 VPS 或服务后会改变。${PLAIN}"
+    fi
 }
 
 uninstall() {
@@ -315,7 +300,7 @@ detect_system
 
 clear
 echo "------------------------------------------------"
-echo -e "${GREEN} Sing-box + Argo 全能脚本 (128M优化版) ${PLAIN}"
+echo -e "${GREEN} Sing-box + Argo 全能脚本 (128M优化 V3.0) ${PLAIN}"
 echo "------------------------------------------------"
 echo "1. 固定隧道 (Token模式, 长期推荐)"
 echo "2. 临时隧道 (无Token, 测试用)"
