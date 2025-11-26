@@ -272,4 +272,84 @@ show_result() {
     if [ "$MODE" == "temp" ]; then
         echo -e "${YELLOW}提示: 临时域名重启会变。如果连不上，请在 v2rayN 尝试:${PLAIN}"
         echo "1. 开启'跳过证书验证'"
-        echo "2.
+        echo "2. 将地址改为优选IP (如 www.visa.com.hk)"
+    fi
+}
+
+uninstall() {
+    echo "正在卸载..."
+    if [ "$INIT" == "systemd" ]; then
+        systemctl stop singbox_lite cloudflared_lite 2>/dev/null || true
+        systemctl disable singbox_lite cloudflared_lite 2>/dev/null || true
+        rm -f /etc/systemd/system/singbox_lite.service /etc/systemd/system/cloudflared_lite.service
+        systemctl daemon-reload
+    else
+        rc-service singbox_lite stop 2>/dev/null || true
+        rc-service cloudflared_lite stop 2>/dev/null || true
+        rc-update del singbox_lite default 2>/dev/null || true
+        rc-update del cloudflared_lite default 2>/dev/null || true
+        rm -f /etc/init.d/singbox_lite /etc/init.d/cloudflared_lite
+    fi
+    rm -rf $WORKDIR $SB_BIN $CF_BIN /var/log/cloudflared.*
+    echo "卸载完成。"
+}
+
+# === 协议选择函数 ===
+select_protocol() {
+    echo "------------------------------------------------"
+    echo -e "${YELLOW}请选择 Cloudflare 隧道协议:${PLAIN}"
+    echo "1. HTTP2 (TCP) - 兼容性好，稳，但容易被阻断"
+    echo "2. QUIC  (UDP) - 速度快，穿透强，但部分地区封UDP"
+    echo "------------------------------------------------"
+    read -p "请选择协议 [1-2] (默认2 QUIC): " proto_choice
+    case "$proto_choice" in
+        1) PROTOCOL="http2" ;;
+        *) PROTOCOL="quic" ;;
+    esac
+    echo -e "已选择协议: ${GREEN}$PROTOCOL${PLAIN}"
+}
+
+# === 菜单 ===
+check_root
+detect_system
+
+clear
+echo "------------------------------------------------"
+echo -e "${GREEN} Sing-box + Argo 终极版 (V5.0 多协议) ${PLAIN}"
+echo "------------------------------------------------"
+echo "1. 固定隧道 (Token模式)"
+echo "2. 临时隧道 (随机域名)"
+echo "3. 卸载"
+echo "0. 退出"
+echo "------------------------------------------------"
+read -p "选择: " choice
+
+case "$choice" in
+    1)
+        select_protocol
+        echo "请在 Cloudflare 后台将 Service 设置为: HTTP -> localhost:8001"
+        read -p "输入 Token: " TOKEN
+        [ -z "$TOKEN" ] && exit 1
+        read -p "输入域名: " DOMAIN
+        [ -z "$DOMAIN" ] && DOMAIN="fixed.com"
+        MODE="fixed"
+        optimize_env
+        install_bins
+        config_singbox
+        setup_service "fixed" "$TOKEN" "$PROTOCOL"
+        show_result
+        ;;
+    2)
+        select_protocol
+        MODE="temp"
+        optimize_env
+        install_bins
+        config_singbox
+        setup_service "temp" "" "$PROTOCOL"
+        get_temp_domain
+        show_result
+        ;;
+    3) uninstall ;;
+    0) exit 0 ;;
+    *) echo "无效";;
+esac
