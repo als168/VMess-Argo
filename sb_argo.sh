@@ -1,8 +1,7 @@
 #!/bin/bash
 # =========================================================
-# Sing-box + Argo 终极版 (V5.0 多协议选择)
+# Sing-box + Argo 终极版 (V5.1 语法修复版)
 # 支持自定义选择 HTTP2 (TCP) 或 QUIC (UDP)
-# 专为 128MB Alpine 优化
 # =========================================================
 
 # set -e 
@@ -125,7 +124,7 @@ EOF
 setup_service() {
     MODE=$1
     TOKEN_OR_URL=$2
-    PROTOCOL=$3  # 接收协议参数 (http2 或 quic)
+    PROTOCOL=$3
 
     if [ "$INIT" == "systemd" ]; then
         systemctl stop singbox_lite cloudflared_lite 2>/dev/null || true
@@ -315,7 +314,7 @@ detect_system
 
 clear
 echo "------------------------------------------------"
-echo -e "${GREEN} Sing-box + Argo 终极版 (V5.0 多协议) ${PLAIN}"
+echo -e "${GREEN} Sing-box + Argo 终极版 (V5.1 多协议) ${PLAIN}"
 echo "------------------------------------------------"
 echo "1. 固定隧道 (Token模式)"
 echo "2. 临时隧道 (随机域名)"
