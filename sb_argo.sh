@@ -1,11 +1,12 @@
 #!/bin/bash
 # =========================================================
-# Sing-box + Argo 全能脚本 (128M 内存极限优化版)
-# V3.0 修复: 解决获取域名时的 cat 报错问题
+# Sing-box + Argo 最终魔改版 (V4.0 QUIC专用)
+# 1. 强制使用 QUIC 协议 (解决临时隧道断连)
+# 2. 移除 set -e (防止脚本闪退)
+# 3. 修复 Alpine 日志读取问题
 # =========================================================
 
-# 去掉 set -e，避免因 crontab 或其它非致命错误导致脚本意外退出
-# set -e 
+# set -e  <-- 已注释，防止脚本闪退
 
 # === 变量 ===
 PORT=8001
@@ -121,7 +122,7 @@ config_singbox() {
 EOF
 }
 
-# === 5. 设置服务 ===
+# === 5. 设置服务 (强制开启 QUIC) ===
 setup_service() {
     MODE=$1
     TOKEN_OR_URL=$2
@@ -151,7 +152,8 @@ EOF
         if [ "$MODE" == "fixed" ]; then
             CF_EXEC="$CF_BIN tunnel run --token $TOKEN_OR_URL"
         else
-            CF_EXEC="$CF_BIN tunnel --url http://localhost:$PORT --no-autoupdate --protocol http2"
+            # 这里的 protocol 已经强制改为了 quic
+            CF_EXEC="$CF_BIN tunnel --url http://localhost:$PORT --no-autoupdate --protocol quic"
         fi
 
         cat > /etc/systemd/system/cloudflared_lite.service <<EOF
@@ -187,7 +189,8 @@ EOF
         if [ "$MODE" == "fixed" ]; then
             CF_ARGS="tunnel run --token $TOKEN_OR_URL"
         else
-            CF_ARGS="tunnel --url http://localhost:$PORT --no-autoupdate --protocol http2"
+            # 这里的 protocol 已经强制改为了 quic
+            CF_ARGS="tunnel --url http://localhost:$PORT --no-autoupdate --protocol quic"
         fi
 
         cat > /etc/init.d/cloudflared_lite <<EOF
@@ -214,25 +217,23 @@ EOF
         rc-service cloudflared_lite restart
     fi
 
-    # 添加 Crontab (容错处理)
+    # 添加 Crontab
     if ! crontab -l 2>/dev/null | grep -q "cloudflared_lite"; then
-        (crontab -l 2>/dev/null || true; echo "0 4 * * * /bin/sh -c 'rm -f /var/log/cloudflared.*; rc-service cloudflared_lite restart 2>/dev/null || systemctl restart cloudflared_lite 2>/dev/null'") | crontab - >/dev/null 2>&1 || echo -e "${YELLOW}Crontab 添加失败，但不影响运行。${PLAIN}"
+        (crontab -l 2>/dev/null || true; echo "0 4 * * * /bin/sh -c 'rm -f /var/log/cloudflared.*; rc-service cloudflared_lite restart 2>/dev/null || systemctl restart cloudflared_lite 2>/dev/null'") | crontab - >/dev/null 2>&1 || true
     fi
 }
 
-# === 6. 获取临时域名 (V3修复版) ===
+# === 6. 获取临时域名 (V4修复版) ===
 get_temp_domain() {
-    echo -e "${YELLOW}正在获取临时域名 (请等待 5 秒)...${PLAIN}"
+    echo -e "${YELLOW}正在获取临时域名 (QUIC模式, 等待5秒)...${PLAIN}"
     sleep 5
     
     DOMAIN=""
     for i in {1..10}; do
         if [ "$INIT" == "systemd" ]; then
-            # Systemd: 使用 journalctl
             DOMAIN=$(journalctl -u cloudflared_lite --no-pager -n 50 | grep -oE "https://[a-zA-Z0-9-]+\.trycloudflare\.com" | head -n 1 | sed 's/https:\/\///')
         else
-            # Alpine/OpenRC: 直接读取文件，不使用 cat 变量
-            # 优先读 .err，如果没有读 .log
+            # Alpine 日志读取修复
             if [ -f "/var/log/cloudflared.err" ]; then
                 DOMAIN=$(grep -oE "https://[a-zA-Z0-9-]+\.trycloudflare\.com" /var/log/cloudflared.err | head -n 1 | sed 's/https:\/\///')
             fi
@@ -248,7 +249,7 @@ get_temp_domain() {
     done
 
     if [ -z "$DOMAIN" ]; then
-        echo -e "${RED}获取失败，请检查 /var/log/cloudflared.err 日志${PLAIN}"
+        echo -e "${RED}获取失败! 请检查日志 /var/log/cloudflared.err${PLAIN}"
         exit 1
     fi
 }
@@ -256,23 +257,24 @@ get_temp_domain() {
 show_result() {
     echo ""
     echo "=================================================="
-    echo -e "       ${GREEN}Sing-box + Argo 安装成功!${PLAIN}"
+    echo -e "       ${GREEN}Sing-box + Argo (QUIC) 安装成功!${PLAIN}"
     echo "=================================================="
     echo -e "域名 (Address) : ${YELLOW}$DOMAIN${PLAIN}"
     echo -e "端口 (Port)    : ${YELLOW}443${PLAIN}"
     echo -e "UUID           : ${YELLOW}$UUID${PLAIN}"
-    echo -e "核心 (Core)    : ${YELLOW}Sing-box${PLAIN}"
+    echo -e "协议 (Protocol): ${YELLOW}VMess + WS + TLS${PLAIN}"
     echo -e "路径 (Path)    : ${YELLOW}/vmess${PLAIN}"
     echo "=================================================="
     
-    VMESS_JSON="{\"v\":\"2\",\"ps\":\"Sb-Argo-${DOMAIN}\",\"add\":\"$DOMAIN\",\"port\":\"443\",\"id\":\"$UUID\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"$DOMAIN\",\"path\":\"/vmess\",\"tls\":\"tls\",\"sni\":\"$DOMAIN\"}"
+    VMESS_JSON="{\"v\":\"2\",\"ps\":\"Argo-QUIC-${DOMAIN}\",\"add\":\"$DOMAIN\",\"port\":\"443\",\"id\":\"$UUID\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"$DOMAIN\",\"path\":\"/vmess\",\"tls\":\"tls\",\"sni\":\"$DOMAIN\"}"
     VMESS_LINK="vmess://$(echo -n "$VMESS_JSON" | base64 | tr -d '\n')"
     
-    echo -e "${GREEN}VMess 链接:${PLAIN}"
+    echo -e "${GREEN}VMess 链接 (请复制):${PLAIN}"
     echo "$VMESS_LINK"
     echo "=================================================="
     if [ "$MODE" == "temp" ]; then
-        echo -e "${YELLOW}注意: 这是临时域名，重启 VPS 或服务后会改变。${PLAIN}"
+        echo -e "${YELLOW}提示: QUIC 模式穿透力更强，但域名仍是临时的。${PLAIN}"
+        echo -e "${YELLOW}如果连不上，请尝试在 v2rayN 把地址改为: www.visa.com.hk${PLAIN}"
     fi
 }
 
@@ -300,10 +302,10 @@ detect_system
 
 clear
 echo "------------------------------------------------"
-echo -e "${GREEN} Sing-box + Argo 全能脚本 (128M优化 V3.0) ${PLAIN}"
+echo -e "${GREEN} Sing-box + Argo 魔改版 (V4.0 QUIC) ${PLAIN}"
 echo "------------------------------------------------"
-echo "1. 固定隧道 (Token模式, 长期推荐)"
-echo "2. 临时隧道 (无Token, 测试用)"
+echo "1. 固定隧道 (Token模式)"
+echo "2. 临时隧道 (QUIC强力穿透模式)"
 echo "3. 卸载"
 echo "0. 退出"
 echo "------------------------------------------------"
