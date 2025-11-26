@@ -345,5 +345,6 @@ case "$choice" in
         ;;
     3) uninstall ;;
     0) exit 0 ;;
+    
     *) echo "无效";;
 esac
