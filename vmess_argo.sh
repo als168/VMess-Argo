@@ -1,10 +1,9 @@
 #!/bin/bash
 # =========================================================
-# Xray (VMess) + Argo 终极修复版 (V7.0)
-# 1. 自动识别 AMD64/ARM64 架构
-# 2. 增加下载文件校验，防止安装失败
-# 3. 修复 curl 管道模式下的输入问题
-# 4. 完美适配 128MB 小内存 (Swap + GOGC)
+# Xray (VMess) + Argo 终极修复版 (V7.1)
+# 1. 修复 unzip 缺失导致的安装失败
+# 2. 自动识别 AMD64/ARM64 架构
+# 3. 完美适配 128MB 小内存
 # =========================================================
 
 # === 变量 ===
@@ -47,7 +46,6 @@ detect_system() {
     fi
 }
 
-# 自动识别架构 (关键修复)
 detect_arch() {
     ARCH=$(uname -m)
     case "$ARCH" in
@@ -64,7 +62,6 @@ detect_arch() {
             exit 1 
             ;;
     esac
-    echo -e "${GREEN}检测到架构: $ARCH${PLAIN}"
 }
 
 # === 2. 优化与依赖 ===
@@ -84,8 +81,7 @@ optimize_env() {
         fi
     fi
 
-    # 强制安装 unzip (修复解压失败)
-    echo -e "${YELLOW}安装依赖...${PLAIN}"
+    echo -e "${YELLOW}安装系统依赖...${PLAIN}"
     $PKG_CMD curl wget unzip jq coreutils ca-certificates >/dev/null 2>&1
     [ "$OS" == "alpine" ] && apk add --no-cache libgcc bash grep >/dev/null 2>&1
 }
@@ -95,10 +91,19 @@ install_bins() {
     mkdir -p $WORKDIR
     detect_arch
 
+    # --- 关键修复：强制检查 unzip 是否存在 ---
+    if ! command -v unzip &> /dev/null; then
+        echo -e "${YELLOW}检测到 unzip 缺失，正在强制补装...${PLAIN}"
+        if [ "$OS" == "alpine" ]; then
+            apk add --no-cache unzip
+        else
+            apt-get update && apt-get install -y unzip || yum install -y unzip
+        fi
+    fi
+
     # --- 安装 Xray ---
     if [ ! -f "$XRAY_BIN" ]; then
         echo -e "${YELLOW}正在下载 Xray (v1.8.4)...${PLAIN}"
-        # 强制使用 v1.8.4 稳定版，防止 API 获取失败
         URL="https://github.com/XTLS/Xray-core/releases/download/v1.8.4/Xray-linux-$X_ARCH.zip"
         
         wget -O xray.zip "$URL"
@@ -108,14 +113,14 @@ install_bins() {
             exit 1
         fi
 
+        echo -e "${YELLOW}正在解压 Xray...${PLAIN}"
         unzip -o xray.zip -d $WORKDIR
         
-        # 移动并赋权
         if [ -f "$WORKDIR/xray" ]; then
             mv "$WORKDIR/xray" $XRAY_BIN
             chmod +x $XRAY_BIN
         else
-            echo -e "${RED}解压失败，未找到 binary 文件!${PLAIN}"
+            echo -e "${RED}解压失败! 请尝试手动运行: apk add unzip${PLAIN}"
             exit 1
         fi
         
@@ -129,11 +134,6 @@ install_bins() {
         echo -e "${YELLOW}正在下载 Cloudflared...${PLAIN}"
         curl -L -o $CF_BIN "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$C_ARCH"
         chmod +x $CF_BIN
-        
-        if [ ! -f "$CF_BIN" ]; then
-            echo -e "${RED}Cloudflared 下载失败!${PLAIN}"
-            exit 1
-        fi
     fi
 }
 
@@ -155,12 +155,11 @@ config_xray() {
 EOF
 }
 
-# === 5. 设置服务 (内存优化) ===
+# === 5. 设置服务 ===
 setup_service() {
     MODE=$1
     TOKEN_OR_URL=$2
 
-    # 停止旧服务
     if [ "$INIT" == "systemd" ]; then
         systemctl stop xray_opt cloudflared_opt 2>/dev/null || true
     else
@@ -285,7 +284,7 @@ get_temp_domain() {
 show_result() {
     echo ""
     echo "=================================================="
-    echo -e "       ${GREEN}Xray + Argo V7.0 安装成功!${PLAIN}"
+    echo -e "       ${GREEN}Xray + Argo V7.1 安装成功!${PLAIN}"
     echo "=================================================="
     echo -e "地址 (Domain)  : ${YELLOW}$DOMAIN${PLAIN}"
     echo -e "端口 (Port)    : ${YELLOW}443${PLAIN}"
@@ -339,15 +338,14 @@ detect_system
 
 clear
 echo "------------------------------------------------"
-echo -e "${GREEN} Xray + Argo 终极修复版 (V7.0) ${PLAIN}"
-echo -e "${YELLOW} 自动识别架构 | 强力安装模式 | 内存优化 ${PLAIN}"
+echo -e "${GREEN} Xray + Argo 终极修复版 (V7.1) ${PLAIN}"
+echo -e "${YELLOW} 自动补全 unzip | 强力安装模式 ${PLAIN}"
 echo "------------------------------------------------"
 echo "1. 固定隧道 (Token模式, 长期推荐)"
 echo "2. 临时隧道 (随机域名, 临时测试)"
 echo "3. 卸载服务"
 echo "0. 退出"
 echo "------------------------------------------------"
-# 修复 curl 管道输入问题
 read -p "请选择 [0-3]: " choice < /dev/tty
 
 case "$choice" in
